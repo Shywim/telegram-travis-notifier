@@ -141,9 +141,11 @@ func getRepoSlug(s string) string {
 	}
 
 	repo := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(match, "http://"), "https://"), ".git")
-	repoSplit := strings.SplitN(repo, "/", 2)
-
-	return repoSplit[1]
+	if strings.Count(repo, "/") > 1 {
+		repoSplit := strings.SplitN(repo, "/", 2)
+		return repoSplit[1]
+	}
+	return repo
 }
 
 func checkForGithubLink(m *tgbotapi.Message, arg string) {
