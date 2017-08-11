@@ -48,7 +48,7 @@ const (
 		"⚠️ _️Case is important!_"
 	msgRepoAdded = "Repository *%s* successfully added!\n" +
 		"I will now notify you of future build results. 🎉"
-	msgRepoBuild = "*[%s](%s) #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
+	msgRepoBuild = "[*%s*](%s)* #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
 
 	strBuildPassed = "_passed_ ✔"
 	strBuildFailed = "_failed_ ❌"
