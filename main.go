@@ -165,6 +165,10 @@ func checkForGithubLink(m *tgbotapi.Message, arg string) {
 	}
 
 	repoInfo := getRepoInfosName(repoSlug)
+	if repoInfo == nil {
+		sendErrUnableToGetBuild(m, repoSlug)
+		return
+	}
 	serialized, _ := json.Marshal(repoInfo)
 
 	conn := redisPool.Get()
