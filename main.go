@@ -203,7 +203,7 @@ func sendBuildInfos(chatID int64, repoBuild *travisInfos, m *tgbotapi.Message) {
 		result = strBuildFailed
 	}
 
-	repoURL := fmt.Sprintf("%s%d", travisURL, repoBuild.Slug)
+	repoURL := fmt.Sprintf("%s%s", travisURL, repoBuild.Slug)
 	msg := tgbotapi.NewMessage(chatID,
 		fmt.Sprintf(msgRepoBuild, repoBuild.Slug, repoBuild.LastBuildNumber,
 			result, repoBuild.LastBuildStartedAt.Format("2006-01-02 15:04"),
