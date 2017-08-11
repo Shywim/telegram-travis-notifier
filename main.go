@@ -103,11 +103,11 @@ func getRepoInfos(url string) *travisInfos {
 }
 
 func getRepoInfosID(id int64) *travisInfos {
-	return getRepoInfos(fmt.Sprintf("%s%d", travisURL, id))
+	return getRepoInfos(fmt.Sprintf("%s%d.json", travisURL, id))
 }
 
 func getRepoInfosName(repo string) *travisInfos {
-	return getRepoInfos(fmt.Sprintf("%s%s", travisURL, repo))
+	return getRepoInfos(fmt.Sprintf("%s%s.json", travisURL, repo))
 }
 
 func checkRepoExists(repo string) (bool, string) {
