@@ -75,6 +75,7 @@ func utilInt64s(reply interface{}, err error) ([]int64, error) {
 
 func showStartMessage(c *tgbotapi.Chat) {
 	msg := tgbotapi.NewMessage(c.ID, msgStart)
+	msg.ParseMode = tgbotapi.ModeMarkdown
 	bot.Send(msg)
 }
 
