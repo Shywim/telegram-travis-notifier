@@ -2,7 +2,7 @@
 
 ## Usage
 
-Simply add the bot yo your telegram: t.me/TravisNotifierBot and you're off!
+Simply add the bot yo your telegram: [t.me/TravisNotifierBot](https://t.me/TravisNotifierBot) and you're off!
 
 Use the `/help` command if you need to.
 
