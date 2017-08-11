@@ -25,8 +25,8 @@ type travisRepo struct {
 type travisInfos struct {
 	*travisRepo
 	LastBuildNumber     string    `json:"last_build_number"`
-	LastBuildStatus     int       `json:"last_build_status"`
-	LastBuildResult     int       `json:"last_build_result"`
+	LastBuildStatus     *int      `json:"last_build_status"`
+	LastBuildResult     *int      `json:"last_build_result"`
 	LastBuildDuration   int64     `json:"last_build_duration"`
 	LastBuildStartedAt  time.Time `json:"last_build_started_at"`
 	LastBuildFinishedAt time.Time `json:"last_build_finished_at"`
@@ -197,7 +197,7 @@ func sendErrUnableToGetBuild(m *tgbotapi.Message, repoSlug string) {
 
 func sendBuildInfos(chatID int64, repoBuild *travisInfos, m *tgbotapi.Message) {
 	var result string
-	if repoBuild.LastBuildStatus == 0 {
+	if *repoBuild.LastBuildStatus == 0 {
 		result = strBuildPassed
 	} else {
 		result = strBuildFailed
