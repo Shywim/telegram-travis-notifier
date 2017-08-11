@@ -33,7 +33,8 @@ type travisInfos struct {
 }
 
 const (
-	travisURL = "https://api.travis-ci.org/repositories/"
+	travisURL    = "https://travis-ci.org/"
+	travisURLApi = "https://api.travis-ci.org/repositories/"
 
 	dbKey              = "teletravis"
 	dbKeyRepos         = "teletravis:data:repos"
@@ -103,15 +104,15 @@ func getRepoInfos(url string) *travisInfos {
 }
 
 func getRepoInfosID(id int64) *travisInfos {
-	return getRepoInfos(fmt.Sprintf("%s%d.json", travisURL, id))
+	return getRepoInfos(fmt.Sprintf("%s%d.json", travisURLApi, id))
 }
 
 func getRepoInfosName(repo string) *travisInfos {
-	return getRepoInfos(fmt.Sprintf("%s%s.json", travisURL, repo))
+	return getRepoInfos(fmt.Sprintf("%s%s.json", travisURLApi, repo))
 }
 
 func checkRepoExists(repo string) (bool, string) {
-	resp, err := http.Get(fmt.Sprintf("%s%s", travisURL, repo))
+	resp, err := http.Get(fmt.Sprintf("%s%s", travisURLApi, repo))
 	if err != nil {
 		log.WithError(err).Error("Failed to fetch repo data")
 		return false, "Unable to check repository"
