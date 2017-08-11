@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -16,20 +14,23 @@ import (
 )
 
 type travisRepo struct {
-	ID          int64
-	Slug        string
-	Description string
-	LastBuildID int64 `json:"last_build_id"`
-}
-
-type travisInfos struct {
-	*travisRepo
+	ID                  int64
+	Slug                string
+	Description         string
+	LastBuildID         int64     `json:"last_build_id"`
 	LastBuildNumber     string    `json:"last_build_number"`
-	LastBuildStatus     *int      `json:"last_build_status"`
-	LastBuildResult     *int      `json:"last_build_result"`
+	LastBuildStatus     int       `json:"last_build_status"`
+	LastBuildResult     int       `json:"last_build_result"`
 	LastBuildDuration   int64     `json:"last_build_duration"`
 	LastBuildStartedAt  time.Time `json:"last_build_started_at"`
 	LastBuildFinishedAt time.Time `json:"last_build_finished_at"`
+}
+
+func newTravisRepo() *travisRepo {
+	t := new(travisRepo)
+	t.LastBuildStatus = -1
+	t.LastBuildResult = -1
+	return t
 }
 
 const (
@@ -44,15 +45,36 @@ const (
 	dbKeyUserLastBuild = "teletravis:data:user:%d:repo:%d:lastbuild"
 
 	msgStart = "Hey there!\n" +
-		"To get started, use the `/add` command to send me a public github repository link or a " +
+		"To get started, use the /add command to send me a public github repository link or a " +
 		"`username/repo` text, and I'll let you know of future Travis builds!\n\n" +
 		"⚠️ _️Case is important!_"
 	msgRepoAdded = "Repository *%s* successfully added!\n" +
 		"I will now notify you of future build results. 🎉"
-	msgRepoBuild = "*%s #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
+	msgRepoBuild     = "*%s #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
+	msgRepoList      = "Here are the repositories I am watching for you:\n%s"
+	msgDeleteSuccess = "*%s* has been deleted from the watchlist successfully!"
+	msgHelp          = "I will notify you of new builds in your travis projects.\n\n" +
+		"*Usage*\n" +
+		"- /add `username/repo` | add a repository from github\n" +
+		"- /list | list the repositories I am watching for you\n" +
+		"- /remove `username/repo` | stop watching a repository\n" +
+		"- /get `username/repo` | fetch a repository's build status\n" +
+		"\n" +
+		"- /help | show this message\n" +
+		"- /about | show informations about my owner\n" +
+		"\n" +
+		"Note that the watch list is bound to the _conversation_, this enable you to added this bot " +
+		"to another conversation and have a specific repository list for this conversation!"
+	msgAbout = "My owner is Matthieu Harlé, aka Shywim.\n\n" +
+		"If you have any issue with this bot, please report on it on the issue tracker: " +
+		"https://github.com/Shywim/telegram-travis-notifier\n\n" +
+		"Twitter - https://twitter.com/Shywim\n" +
+		"Github - https://github.com/Shywim\n" +
+		"Blog - https://blog.shywim.fr"
 
-	strBuildPassed = "*passed* ✔"
-	strBuildFailed = "*failed* ❌"
+	strBuildPassed  = "*passed* ✔"
+	strBuildFailed  = "*failed* ❌"
+	strRepoListItem = "\n- [%s](%s)"
 )
 
 var (
@@ -74,62 +96,22 @@ func utilInt64s(reply interface{}, err error) ([]int64, error) {
 	return ints, nil
 }
 
-func showStartMessage(c *tgbotapi.Chat) {
+func sendStartMessage(c *tgbotapi.Chat) {
 	msg := tgbotapi.NewMessage(c.ID, msgStart)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	bot.Send(msg)
 }
 
-func showHelp(m *tgbotapi.Message) {
-	showStartMessage(m.Chat)
+func sendHelp(m *tgbotapi.Message) {
+	msg := tgbotapi.NewMessage(m.Chat.ID, msgHelp)
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	bot.Send(msg)
 }
 
-func getRepoInfos(url string) *travisInfos {
-	resp, err := http.Get(url)
-	if err != nil {
-		log.WithError(err).Error("Failed to fetch repo data")
-		return nil
-	}
-
-	repoInfos := &travisInfos{}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	err = json.Unmarshal(body, repoInfos)
-	if err != nil {
-		log.WithError(err).Error("Failed to fetch repo data")
-		return nil
-	}
-
-	return repoInfos
-}
-
-func getRepoInfosID(id int64) *travisInfos {
-	return getRepoInfos(fmt.Sprintf("%s%d.json", travisURLApi, id))
-}
-
-func getRepoInfosName(repo string) *travisInfos {
-	return getRepoInfos(fmt.Sprintf("%s%s.json", travisURLApi, repo))
-}
-
-func checkRepoExists(repo string) (bool, string) {
-	resp, err := http.Get(fmt.Sprintf("%s%s", travisURLApi, repo))
-	if err != nil {
-		log.WithError(err).Error("Failed to fetch repo data")
-		return false, "Unable to check repository"
-	}
-
-	if resp.StatusCode != 200 {
-		switch resp.StatusCode {
-		case http.StatusNotFound:
-			return false, ""
-		case http.StatusInternalServerError:
-			return false, "It seems travis-ci.org are unavailable, check back later!"
-		default:
-			return false, "Unable to check repository"
-		}
-	}
-
-	return true, ""
+func sendAbout(m *tgbotapi.Message) {
+	msg := tgbotapi.NewMessage(m.Chat.ID, msgAbout)
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	bot.Send(msg)
 }
 
 func getRepoSlug(s string) string {
@@ -195,9 +177,15 @@ func sendErrUnableToGetBuild(m *tgbotapi.Message, repoSlug string) {
 	bot.Send(msg)
 }
 
-func sendBuildInfos(chatID int64, repoBuild *travisInfos, m *tgbotapi.Message) {
+func sendErrUnableToListRepos(m *tgbotapi.Message) {
+	msg := tgbotapi.NewMessage(m.Chat.ID, "I could not retrieve your repository list 🙁")
+	msg.ReplyToMessageID = m.MessageID
+	bot.Send(msg)
+}
+
+func sendBuildInfos(chatID int64, repoBuild *travisRepo, m *tgbotapi.Message) {
 	var result string
-	if *repoBuild.LastBuildStatus == 0 {
+	if repoBuild.LastBuildStatus == 0 {
 		result = strBuildPassed
 	} else {
 		result = strBuildFailed
@@ -215,11 +203,24 @@ func sendBuildInfos(chatID int64, repoBuild *travisInfos, m *tgbotapi.Message) {
 	bot.Send(msg)
 }
 
+func sendEmptyList(m *tgbotapi.Message) {
+	msg := tgbotapi.NewMessage(m.Chat.ID, "Your repository list is empty, start by adding one with /add!")
+	msg.ReplyToMessageID = m.MessageID
+	bot.Send(msg)
+}
+
+func sendSuccessDelete(m *tgbotapi.Message, s string) {
+	msg := tgbotapi.NewMessage(m.Chat.ID, fmt.Sprintf(msgDeleteSuccess, s))
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	msg.ReplyToMessageID = m.MessageID
+	bot.Send(msg)
+}
+
 func checkBuild(m *tgbotapi.Message, arg string) {
 	repoSlug := arg
 
 	if repoSlug == "" {
-		showHelp(m)
+		sendHelp(m)
 		return
 	}
 
@@ -232,17 +233,91 @@ func checkBuild(m *tgbotapi.Message, arg string) {
 	sendBuildInfos(m.Chat.ID, repoBuild, m)
 }
 
+//func proposeDeleteRepos(m *tgbotapi.Message) {
+//	conn := redisPool.Get()
+//	defer conn.Close()
+//
+//	repos := getUserReposFromDb(&conn, m.Chat.ID)
+//
+//	buttons := [][]tgbotapi.KeyboardButton{}
+//	for i, repo := range repos {
+//		button := tgbotapi.NewKeyboardButton(repo.Slug)
+//		buttons[i%2] = append(buttons[i%2], button)
+//
+//		if i == 7 {
+//			break
+//		}
+//	}
+//
+//	keyboard := tgbotapi.NewReplyKeyboard(buttons...)
+//	keyboard.OneTimeKeyboard = true
+//	keyboard.Selective = true
+//	keyboard.ResizeKeyboard = true
+//
+//	msg := tgbotapi.NewMessage(m.Chat.ID, "Pick the repo you want to delete or write its name")
+//	msg.ReplyMarkup = keyboard
+//	msg.ReplyToMessageID = m.MessageID
+//	bot.Send(msg)
+//}
+
+func removeRepo(m *tgbotapi.Message, args string) {
+	//	if args == "" {
+	//		proposeDeleteRepos(m)
+	//		return
+	//	}
+
+	if !ghSlugRegex.MatchString(args) {
+		sendHelp(m)
+		return
+	}
+
+	repoInfos := getRepoInfosName(args)
+
+	conn := redisPool.Get()
+	defer conn.Close()
+	deleteRepoFromDb(&conn, m.Chat.ID, repoInfos.ID)
+
+	sendSuccessDelete(m, args)
+}
+
+func listRepos(m *tgbotapi.Message) {
+	conn := redisPool.Get()
+	defer conn.Close()
+
+	repos := getUserReposFromDb(&conn, m.Chat.ID)
+	if repos == nil {
+		sendErrUnableToListRepos(m)
+		return
+	} else if len(repos) == 0 {
+		sendEmptyList(m)
+		return
+	}
+
+	repoList := ""
+	for _, repo := range repos {
+		repoList += fmt.Sprintf(strRepoListItem, repo.Slug, utilTravisURL(repo.Slug))
+	}
+
+	msg := tgbotapi.NewMessage(m.Chat.ID, fmt.Sprintf(msgRepoList, repoList))
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	msg.ReplyToMessageID = m.MessageID
+	bot.Send(msg)
+}
+
 func handleMessage(m *tgbotapi.Message) {
 	if !m.IsCommand() {
-		showHelp(m)
+		sendHelp(m)
 		return
 	}
 
 	cmd := m.Command()
 	switch cmd {
 	case "start":
+		sendStartMessage(m.Chat)
+		break
+
 	case "help":
-		showStartMessage(m.Chat)
+		sendHelp(m)
 		break
 
 	case "add":
@@ -254,9 +329,18 @@ func handleMessage(m *tgbotapi.Message) {
 		break
 
 	case "remove":
+		removeRepo(m, m.CommandArguments())
+		break
+
 	case "list":
-	case "settings":
+		listRepos(m)
+		break
+
 	case "about":
+		sendAbout(m)
+		break
+
+	case "settings":
 		msg := tgbotapi.NewMessage(m.Chat.ID, "not implemented")
 		msg.ReplyToMessageID = m.MessageID
 		bot.Send(msg)
@@ -290,23 +374,11 @@ func launchUpdateLoop() {
 		}
 
 		for _, repo := range repos {
-			repoInfo := &travisRepo{}
-
-			reply, err := conn.Do("GET", fmt.Sprintf(dbKeyRepo, repo))
-			data, err := redis.Bytes(reply, err)
-			if err != nil {
-				log.WithFields(log.Fields{
-					"error": err,
-					"repo":  repo,
-				}).Error("Error getting repo infos from redis")
-				continue
-			}
-
-			json.Unmarshal(data, repoInfo)
+			repoInfo := getRepoFromDb(&conn, repo)
 
 			repoBuild := getRepoInfosID(repoInfo.ID)
 
-			reply, err = conn.Do("SMEMBERS", fmt.Sprintf(dbKeyRepoUsers, repo))
+			reply, err := conn.Do("SMEMBERS", fmt.Sprintf(dbKeyRepoUsers, repo))
 			users, err := utilInt64s(reply, err)
 			if err != nil {
 				log.WithFields(log.Fields{
