@@ -48,10 +48,10 @@ const (
 		"⚠️ _️Case is important!_"
 	msgRepoAdded = "Repository *%s* successfully added!\n" +
 		"I will now notify you of future build results. 🎉"
-	msgRepoBuild = "[*%s*](%s)* #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
+	msgRepoBuild = "*%s #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
 
-	strBuildPassed = "_passed_ ✔"
-	strBuildFailed = "_failed_ ❌"
+	strBuildPassed = "*passed* ✔"
+	strBuildFailed = "*failed* ❌"
 )
 
 var (
@@ -198,7 +198,7 @@ func sendBuildInfos(chatID int64, repoBuild *travisInfos, m *tgbotapi.Message) {
 
 	repoURL := fmt.Sprintf("%s%d", travisURL, repoBuild.ID)
 	msg := tgbotapi.NewMessage(chatID,
-		fmt.Sprintf(msgRepoBuild, repoBuild.Slug, repoURL, repoBuild.LastBuildNumber,
+		fmt.Sprintf(msgRepoBuild, repoBuild.Slug, repoBuild.LastBuildNumber,
 			result, repoBuild.LastBuildStartedAt.Format("2006-01-02 15:04"),
 			repoBuild.LastBuildFinishedAt.Sub(repoBuild.LastBuildStartedAt), repoURL))
 	msg.ParseMode = tgbotapi.ModeMarkdown
