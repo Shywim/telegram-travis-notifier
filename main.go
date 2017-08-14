@@ -378,6 +378,13 @@ func launchUpdateLoop() {
 
 			repoBuild := getRepoInfosID(repoInfo.ID)
 
+			if repoBuild.LastBuildFinishedAt.IsZero() {
+				log.WithFields(log.Fields{
+					"repo": repo,
+				}).Info("Travis build is running, checking back later")
+				continue
+			}
+
 			reply, err := conn.Do("SMEMBERS", fmt.Sprintf(dbKeyRepoUsers, repo))
 			users, err := utilInt64s(reply, err)
 			if err != nil {
