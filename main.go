@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +52,7 @@ const (
 	msgRepoAdded = "Repository *%s* successfully added!\n" +
 		"I will now notify you of future build results. 🎉"
 	msgRepoBuild     = "*%s #%s*\n\nLast build %s\nDate: %s\nRun time: %v\n\n%s"
-	msgRepoList      = "Here are the repositories I am watching for you:\n%s"
+	msgRepoList      = "Here are the repositories I am watching for you:\n"
 	msgDeleteSuccess = "*%s* has been deleted from the watchlist successfully!"
 	msgHelp          = "I will notify you of new builds in your travis projects.\n\n" +
 		"*Usage*\n" +
@@ -78,10 +79,12 @@ const (
 )
 
 var (
-	bot         *tgbotapi.BotAPI
-	ghLinkRegex *regexp.Regexp
-	ghSlugRegex *regexp.Regexp
-	redisPool   *redis.Pool
+	bot           *tgbotapi.BotAPI
+	ghLinkRegex   *regexp.Regexp
+	ghSlugRegex   *regexp.Regexp
+	dataNextRegex *regexp.Regexp
+	dataPrevRegex *regexp.Regexp
+	redisPool     *redis.Pool
 )
 
 func utilInt64s(reply interface{}, err error) ([]int64, error) {
@@ -284,7 +287,7 @@ func listRepos(m *tgbotapi.Message) {
 	conn := redisPool.Get()
 	defer conn.Close()
 
-	repos := getUserReposFromDb(&conn, m.Chat.ID)
+	repos, hasMore := getRepoListPage(0, m.Chat.ID)
 	if repos == nil {
 		sendErrUnableToListRepos(m)
 		return
@@ -293,14 +296,11 @@ func listRepos(m *tgbotapi.Message) {
 		return
 	}
 
-	repoList := ""
-	for _, repo := range repos {
-		repoList += fmt.Sprintf(strRepoListItem, repo.Slug, utilTravisURL(repo.Slug))
-	}
+	keyboard := repoListToKeyboardMarkup(repos, 0, hasMore)
 
-	msg := tgbotapi.NewMessage(m.Chat.ID, fmt.Sprintf(msgRepoList, repoList))
+	msg := tgbotapi.NewMessage(m.Chat.ID, fmt.Sprintf(msgRepoList))
 	msg.ParseMode = tgbotapi.ModeMarkdown
-	msg.ReplyToMessageID = m.MessageID
+	msg.ReplyMarkup = keyboard
 	bot.Send(msg)
 }
 
@@ -345,6 +345,108 @@ func handleMessage(m *tgbotapi.Message) {
 		msg.ReplyToMessageID = m.MessageID
 		bot.Send(msg)
 	}
+}
+
+func repoListToKeyboardMarkup(repos []*travisRepo, page int, hasMore bool) tgbotapi.InlineKeyboardMarkup {
+	buttons := [][]tgbotapi.InlineKeyboardButton{}
+	for i, repo := range repos {
+		if i%2 == 0 {
+			buttons = append(buttons, []tgbotapi.InlineKeyboardButton{})
+		}
+		buttons[i/2] = append(buttons[i/2], tgbotapi.NewInlineKeyboardButtonData(repo.Slug, repo.Slug))
+	}
+	if hasMore && page > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("◀ Previous", fmt.Sprintf("PREV%d", page-1)),
+			tgbotapi.NewInlineKeyboardButtonData("Next ▶", fmt.Sprintf("NEXT%d", page+1))))
+	} else if hasMore && page == 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Next ▶", fmt.Sprintf("NEXT%d", page+1))))
+	} else if !hasMore && page > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("◀ Previous", fmt.Sprintf("PREV%d", page-1))))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(buttons...)
+}
+
+func handleCallbackQuery(u *tgbotapi.Update) {
+	cq := u.CallbackQuery
+	data := cq.Data
+
+	if dataNextRegex.MatchString(data) || dataPrevRegex.MatchString(data) {
+		page, _ := strconv.Atoi(strings.TrimLeft(strings.TrimLeft(data, "NEXT"), "PREV"))
+		repos, hasMore := getRepoListPage(page, cq.Message.Chat.ID)
+
+		keyboard := repoListToKeyboardMarkup(repos, page, hasMore)
+
+		edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID, keyboard)
+		bot.Send(edit)
+	} else if data == "BACK" {
+		repos, hasMore := getRepoListPage(0, cq.Message.Chat.ID)
+
+		keyboard := repoListToKeyboardMarkup(repos, 0, hasMore)
+
+		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, msgRepoList)
+		edit.ParseMode = tgbotapi.ModeMarkdown
+		edit.ReplyMarkup = &keyboard
+		bot.Send(edit)
+	} else {
+		if strings.HasPrefix(data, "CHECK:") {
+			data = strings.TrimPrefix(data, "CHECK:")
+		}
+
+		repoBuild := getRepoInfosName(data)
+		topRow := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Check", fmt.Sprintf("CHECK:%s", data)),
+			tgbotapi.NewInlineKeyboardButtonData("Remove", fmt.Sprintf("REMOVE:%s", data)))
+		bottomRow := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏪ Back to list", "BACK"))
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(topRow, bottomRow)
+
+		var result string
+		if repoBuild.LastBuildStatus == 0 {
+			result = strBuildPassed
+		} else {
+			result = strBuildFailed
+		}
+
+		repoURL := fmt.Sprintf("%s%s", travisURL, repoBuild.Slug)
+		msg := fmt.Sprintf(msgRepoBuild, repoBuild.Slug, repoBuild.LastBuildNumber,
+			result, repoBuild.LastBuildStartedAt.Format("2006-01-02 15:04"),
+			repoBuild.LastBuildFinishedAt.Sub(repoBuild.LastBuildStartedAt), repoURL)
+
+		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, msg)
+		edit.ParseMode = tgbotapi.ModeMarkdown
+		edit.ReplyMarkup = &keyboard
+		bot.Send(edit)
+	}
+
+	bot.AnswerCallbackQuery(tgbotapi.CallbackConfig{CallbackQueryID: cq.ID})
+}
+
+func getRepoListPage(page int, c int64) ([]*travisRepo, bool) {
+	conn := redisPool.Get()
+	defer conn.Close()
+
+	repos := getUserReposFromDb(&conn, c)
+	if repos == nil {
+		return nil, false
+	} else if len(repos) == 0 {
+		return nil, false
+	}
+
+	listRepos := []*travisRepo{}
+	for i := page * 6; i < (page+1)*6; i++ {
+		repo := repos[i]
+		listRepos = append(listRepos, repo)
+
+		if i == len(repos)-1 {
+			break
+		}
+	}
+
+	hasMore := false
+	if len(repos)-(page+1)*6 > 0 {
+		hasMore = true
+	}
+
+	return listRepos, hasMore
 }
 
 func getRepos(c *redis.Conn) []int64 {
@@ -425,6 +527,8 @@ func launchUpdateLoop() {
 func init() {
 	ghLinkRegex = regexp.MustCompile(".*github.com/[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*")
 	ghSlugRegex = regexp.MustCompile("[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*")
+	dataNextRegex = regexp.MustCompile("NEXT[0-9]*")
+	dataPrevRegex = regexp.MustCompile("PREV[0-9]*")
 }
 
 func main() {
@@ -463,7 +567,12 @@ func main() {
 	go launchUpdateLoop()
 
 	for update := range updates {
-		if update.Message == nil {
+		if update.Message == nil && update.CallbackQuery == nil {
+			continue
+		}
+
+		if update.CallbackQuery != nil {
+			go handleCallbackQuery(&update)
 			continue
 		}
 
